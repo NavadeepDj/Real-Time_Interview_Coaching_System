@@ -58,6 +58,9 @@ while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
         break
+    
+    # Flip the frame first
+    frame = cv2.flip(frame, 1)
     h, w = frame.shape[:2]
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = face_mesh.process(rgb)
@@ -148,7 +151,7 @@ while cap.isOpened():
     else:
         cv2.putText(display, "❗ Please look at the camera!", (10,30), cv2.FONT_HERSHEY_SIMPLEX,1,(0,0,255),2)
 
-    cv2.imshow("Interview Coach", cv2.flip(display,1))
+    cv2.imshow("Interview Coach", display)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
