@@ -8,17 +8,23 @@ import { Mic, Square, ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useInterview } from "@/contexts/InterviewContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useInterviewMetrics } from "@/hooks/useInterviewMetrics";
 
 const SpeechTest = () => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const { saveSpeechTest, startNewSession, sessionId } = useInterview();
+  const { sendAudioForAnalysis } = useInterviewMetrics();
   
   const [isRecording, setIsRecording] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [hasRecorded, setHasRecorded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
   
   const [metrics, setMetrics] = useState({
     fluency: 0,
@@ -29,37 +35,88 @@ const SpeechTest = () => {
 
   const prompt = "Describe a recent project you worked on and explain your role in it. What challenges did you face and how did you overcome them?";
 
-  const startRecording = () => {
-    // Start recording immediately - don't wait for Firebase
-    setIsRecording(true);
-    setRecordingTime(0);
-    intervalRef.current = setInterval(() => {
-      setRecordingTime((prev) => prev + 1);
-    }, 1000);
-    toast.success("Recording started");
-    
-    // Create session in background if user is logged in and no session exists
-    if (currentUser && !sessionId) {
-      startNewSession().catch((error) => {
-        console.error("Failed to create session:", error);
+  const startRecording = async () => {
+    try {
+      // Get microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      
+      // Create MediaRecorder
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
       });
+      
+      audioChunksRef.current = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+      
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start(1000); // Collect data every second
+      
+      // Start recording UI updates
+      setIsRecording(true);
+      setRecordingTime(0);
+      intervalRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+      
+      toast.success("Recording started - speak clearly");
+      
+      // Create session in background if user is logged in and no session exists
+      if (currentUser && !sessionId) {
+        startNewSession().catch((error) => {
+          console.error("Failed to create session:", error);
+        });
+      }
+    } catch (error) {
+      console.error("Failed to access microphone:", error);
+      toast.error("Failed to access microphone. Please check permissions.");
     }
   };
 
   const stopRecording = async () => {
     setIsRecording(false);
     const finalRecordingTime = recordingTime;
+    
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
     }
     
-    // Simulate analysis
-    setTimeout(async () => {
+    if (!mediaRecorderRef.current) {
+      return;
+    }
+    
+    setIsAnalyzing(true);
+    toast.info("Analyzing your speech...");
+    
+    // Stop the media recorder and wait for final data
+    const audioBlob = await new Promise<Blob>((resolve) => {
+      mediaRecorderRef.current!.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        resolve(blob);
+      };
+      mediaRecorderRef.current!.stop();
+    });
+    
+    // Stop the audio stream
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    try {
+      // Send audio to backend for real analysis
+      const analysisResult = await sendAudioForAnalysis(audioBlob, prompt);
+      
       const newMetrics = {
-        fluency: Math.floor(Math.random() * 30) + 70,
-        fillerWords: Math.floor(Math.random() * 10) + 2,
-        pace: Math.floor(Math.random() * 40) + 120,
-        pronunciation: Math.floor(Math.random() * 25) + 75,
+        fluency: Math.round(analysisResult.fluency_score || 0),
+        fillerWords: analysisResult.filler_words_count || 0,
+        pace: Math.round(analysisResult.pace_wpm || 0),
+        pronunciation: Math.round(analysisResult.pronunciation_score || 0),
       };
       
       setMetrics(newMetrics);
@@ -71,7 +128,9 @@ const SpeechTest = () => {
         try {
           await saveSpeechTest({
             ...newMetrics,
-            recordingDuration: finalRecordingTime
+            recordingDuration: finalRecordingTime,
+            transcribedText: analysisResult.transcribed_text,
+            clarityScore: analysisResult.clarity_score,
           });
           toast.success("Speech test results saved!");
         } catch (error) {
@@ -83,7 +142,14 @@ const SpeechTest = () => {
       } else {
         toast.success("Speech analyzed successfully");
       }
-    }, 1500);
+    } catch (error) {
+      console.error("Failed to analyze speech:", error);
+      toast.error("Failed to analyze speech. Please check backend connection.");
+      // Reset state so user can try again
+      setHasRecorded(false);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -166,11 +232,11 @@ const SpeechTest = () => {
                     {formatTime(recordingTime)}
                   </div>
                   <p className="text-primary-foreground/80">
-                    {isRecording ? "Recording in progress..." : hasRecorded ? "Recording complete" : "Ready to record"}
+                    {isRecording ? "Recording in progress..." : isAnalyzing ? "Analyzing speech..." : hasRecorded ? "Recording complete" : "Ready to record"}
                   </p>
                 </div>
 
-                {!isRecording ? (
+                {!isRecording && !isAnalyzing ? (
                   <Button
                     size="lg"
                     variant="secondary"
@@ -179,6 +245,16 @@ const SpeechTest = () => {
                   >
                     <Mic className="h-5 w-5" />
                     Start Recording
+                  </Button>
+                ) : isAnalyzing ? (
+                  <Button
+                    size="lg"
+                    variant="secondary"
+                    disabled
+                    className="gap-2"
+                  >
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Analyzing...
                   </Button>
                 ) : (
                   <Button

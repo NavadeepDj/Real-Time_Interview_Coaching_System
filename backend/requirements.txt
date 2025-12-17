@@ -1,0 +1,26 @@
+# FastAPI and server
+fastapi
+uvicorn[standard]
+python-multipart
+websockets
+
+# Computer Vision & ML
+opencv-python
+mediapipe>=0.10.8
+numpy
+
+# Speech-to-Text (Whisper)
+openai-whisper
+torch
+
+# Text similarity for speech clarity
+scikit-learn
+nltk
+
+# Audio processing
+sounddevice
+scipy
+webrtcvad
+
+# CORS
+python-dotenv

@@ -899,4 +899,8 @@ python small_interview_helper.py
 
 [10] P. Ekman and W. V. Friesen, "Facial Action Coding System: A Technique for the Measurement of Facial Movement," Consulting Psychologists Press, Palo Alto, CA, 1978.
 
+<<<<<<< HEAD
 ---
+=======
+---
+>>>>>>> 35827c8 (fix: README.md)
