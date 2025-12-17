@@ -1,15 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowLeft, Eye, Activity, Smile, Clock, Loader2 } from "lucide-react";
+import { ArrowLeft, Eye, Activity, Smile, Clock, Loader2, Mic, MicOff, Video, VideoOff, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useInterview } from "@/contexts/InterviewContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useInterviewMetrics, VideoMetrics, AudioMetrics } from "@/hooks/useInterviewMetrics";
 
 const Interview = () => {
   const navigate = useNavigate();
@@ -20,6 +20,22 @@ const Interview = () => {
   const [answers, setAnswers] = useState<string[]>(["", "", ""]);
   const [timeRemaining, setTimeRemaining] = useState(1800); // 30 minutes
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  
+  // Video element ref
+  const videoElementRef = useRef<HTMLVideoElement>(null);
+  
+  // Media recorder for audio
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  
+  // Use our custom hook for real-time metrics
+  const { 
+    metrics, 
+    startVideo, 
+    stopVideo, 
+    sendAudioForAnalysis 
+  } = useInterviewMetrics();
 
   const questions = [
     {
@@ -42,14 +58,126 @@ const Interview = () => {
     }
   ];
 
-  const [liveMetrics] = useState({
-    attention: 85,
-    eyeContact: 78,
+  // Compute live metrics from backend - use 0 as fallback until real data arrives
+  const liveMetrics = {
+    attention: metrics.video?.attention_score ?? 0,
+    eyeContact: metrics.video?.eye_contact_score ?? 0,
+    isLooking: metrics.video?.is_looking_at_camera ?? false,
+    faceDetected: metrics.video?.face_detected ?? false,
+    yaw: metrics.video?.yaw ?? 0,
+    pitch: metrics.video?.pitch ?? 0,
+    roll: metrics.video?.roll ?? 0,
+    // Audio metrics
+    clarity: metrics.audio?.clarity_score ?? 0,
+    fluency: metrics.audio?.fluency_score ?? 0,
+    pace: metrics.audio?.pace_wpm ?? 0,
+    fillerWords: metrics.audio?.filler_words_count ?? 0,
+    transcribedText: metrics.audio?.transcribed_text ?? "",
+    pronunciation: metrics.audio?.pronunciation_score ?? 0,
+    // Overall confidence based on all metrics
+    confidence: metrics.isConnected ? Math.round(
+      ((metrics.video?.attention_score ?? 0) + 
+       (metrics.video?.eye_contact_score ?? 0) + 
+       (metrics.audio?.clarity_score ?? 0)) / 3
+    ) : 0,
+    emotion: metrics.video?.is_looking_at_camera ? "Focused" : metrics.video?.face_detected ? "Distracted" : "No Face",
     blinkRate: 15,
-    emotion: "Confident",
-    confidence: 82,
-    speakingPace: 145
-  });
+    speakingPace: metrics.audio?.pace_wpm ?? 0
+  };
+
+  // Start video when component mounts
+  useEffect(() => {
+    const initializeVideo = async () => {
+      if (videoElementRef.current) {
+        try {
+          await startVideo(videoElementRef.current);
+          toast.success("Camera connected successfully");
+        } catch (error) {
+          toast.error("Failed to access camera. Please check permissions.");
+        }
+      }
+    };
+
+    initializeVideo();
+
+    return () => {
+      stopVideo();
+      stopRecording();
+    };
+  }, []);
+
+  // Timer countdown
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeRemaining(prev => {
+        if (prev <= 0) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  // Start audio recording
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+      
+      audioChunksRef.current = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        
+        // Convert to WAV for Whisper (better compatibility)
+        try {
+          toast.info("Analyzing your speech...");
+          await sendAudioForAnalysis(audioBlob, questions[currentQuestion].question);
+          toast.success("Speech analysis complete");
+        } catch (error) {
+          toast.error("Failed to analyze speech");
+        }
+        
+        // Stop audio stream
+        stream.getTracks().forEach(track => track.stop());
+      };
+      
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start(1000); // Collect data every second
+      setIsRecording(true);
+      toast.success("Recording started - speak your answer");
+    } catch (error) {
+      toast.error("Failed to access microphone");
+    }
+  };
+
+  // Stop audio recording
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  // Toggle recording
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
 
   const handleAnswerChange = (value: string) => {
     const newAnswers = [...answers];
@@ -58,6 +186,11 @@ const Interview = () => {
   };
 
   const handleNextQuestion = async () => {
+    // Stop recording before moving to next question
+    if (isRecording) {
+      stopRecording();
+    }
+
     if (currentQuestion < questions.length - 1) {
       setCurrentQuestion(currentQuestion + 1);
       toast.success("Moving to next question");
@@ -66,24 +199,41 @@ const Interview = () => {
       if (currentUser) {
         setIsSubmitting(true);
         try {
-          // Generate scores based on answer length and metrics
-          const questionResults = questions.map((q, idx) => ({
-            title: q.title,
-            category: q.category,
-            difficulty: q.difficulty,
-            question: q.question,
-            answer: answers[idx],
-            score: Math.floor(Math.random() * 25) + 70,
-            feedback: answers[idx].length > 100 
-              ? "Good detailed response with clear explanation."
-              : "Consider providing more detail in your response."
-          }));
+          // Generate scores based on answer length and real metrics from backend
+          const questionResults = questions.map((q, idx) => {
+            const answerLength = answers[idx].length;
+            // Score based on answer completeness and live metrics
+            const baseScore = answerLength > 200 ? 85 : answerLength > 100 ? 75 : answerLength > 50 ? 65 : 50;
+            const metricsBonus = liveMetrics.confidence > 70 ? 10 : liveMetrics.confidence > 50 ? 5 : 0;
+            const score = Math.min(100, baseScore + metricsBonus);
+            
+            return {
+              title: q.title,
+              category: q.category,
+              difficulty: q.difficulty,
+              question: q.question,
+              answer: answers[idx],
+              score,
+              feedback: answerLength > 100 
+                ? "Good detailed response with clear explanation."
+                : "Consider providing more detail in your response."
+            };
+          });
           
           const technicalScore = Math.floor(questionResults.reduce((acc, q) => acc + (q.score || 0), 0) / questionResults.length);
+          
+          // Use real speech test results or live audio metrics
           const communicationScore = speechTestResults 
             ? Math.floor((speechTestResults.fluency + speechTestResults.pronunciation) / 2)
-            : liveMetrics.confidence;
-          const bodyLanguageScore = Math.floor((liveMetrics.eyeContact + liveMetrics.confidence + liveMetrics.attention) / 3);
+            : liveMetrics.clarity > 0 || liveMetrics.fluency > 0
+              ? Math.floor((liveMetrics.clarity + liveMetrics.fluency) / 2)
+              : 0;
+          
+          // Use real body language metrics from video analysis
+          const bodyLanguageScore = metrics.isConnected && liveMetrics.faceDetected
+            ? Math.floor((liveMetrics.eyeContact + liveMetrics.attention + liveMetrics.confidence) / 3)
+            : 0;
+          
           const overallScore = Math.floor((technicalScore + communicationScore + bodyLanguageScore) / 3);
           
           await completeSession({
@@ -108,6 +258,7 @@ const Interview = () => {
           setIsSubmitting(false);
         }
       }
+      stopVideo();
       navigate("/report");
     }
   };
@@ -118,16 +269,16 @@ const Interview = () => {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const MetricGauge = ({ label, value, icon: Icon, color }: any) => (
+  const MetricGauge = ({ label, value, icon: Icon, color, showProgress = true }: any) => (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
         <div className="flex items-center gap-2">
           <Icon className={`h-4 w-4 ${color}`} />
           <span className="font-medium">{label}</span>
         </div>
-        <span className="font-bold">{value}{typeof value === 'number' && '%'}</span>
+        <span className="font-bold">{typeof value === 'number' ? `${Math.round(value)}%` : value}</span>
       </div>
-      {typeof value === 'number' && <Progress value={value} className="h-2" />}
+      {showProgress && typeof value === 'number' && <Progress value={value} className="h-2" />}
     </div>
   );
 
@@ -141,6 +292,10 @@ const Interview = () => {
           </Button>
           <div className="flex items-center gap-4">
             <Badge variant="secondary">Step 2 of 2</Badge>
+            {/* Connection status indicator */}
+            <Badge variant={metrics.isConnected ? "default" : "destructive"}>
+              {metrics.isConnected ? "🟢 Connected" : "🔴 Disconnected"}
+            </Badge>
             <div className="flex items-center gap-2 text-sm font-medium">
               <Clock className="h-4 w-4" />
               {formatTime(timeRemaining)}
@@ -204,13 +359,38 @@ const Interview = () => {
                 </p>
 
                 <Textarea
-                  placeholder="Type your answer here..."
+                  placeholder="Type your answer here or click the microphone to speak..."
                   value={answers[currentQuestion]}
                   onChange={(e) => handleAnswerChange(e.target.value)}
                   className="min-h-[200px] text-base"
                 />
 
+                {/* Transcribed text from speech */}
+                {liveMetrics.transcribedText && (
+                  <div className="p-3 bg-secondary rounded-lg">
+                    <p className="text-xs text-muted-foreground mb-1">Transcribed Speech:</p>
+                    <p className="text-sm">{liveMetrics.transcribedText}</p>
+                  </div>
+                )}
+
                 <div className="flex gap-3">
+                  <Button 
+                    variant={isRecording ? "destructive" : "outline"}
+                    size="lg"
+                    onClick={toggleRecording}
+                  >
+                    {isRecording ? (
+                      <>
+                        <MicOff className="mr-2 h-4 w-4" />
+                        Stop Recording
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="mr-2 h-4 w-4" />
+                        Record Answer
+                      </>
+                    )}
+                  </Button>
                   <Button onClick={handleNextQuestion} size="lg" disabled={isSubmitting}>
                     {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     {currentQuestion < questions.length - 1 ? "Next Question" : "Finish Interview"}
@@ -225,17 +405,43 @@ const Interview = () => {
             {/* Camera Feed Preview */}
             <Card>
               <CardContent className="pt-6">
-                <div className="aspect-video bg-muted rounded-lg flex items-center justify-center relative overflow-hidden">
-                  <div className="text-muted-foreground text-center">
-                    <Activity className="h-12 w-12 mx-auto mb-2" />
-                    <p className="text-sm">Camera Feed + Body Language Overlay</p>
-                    <p className="text-xs mt-1">Live tracking active</p>
-                  </div>
+                <div className="aspect-video bg-muted rounded-lg relative overflow-hidden">
+                  {/* Actual video element */}
+                  <video
+                    ref={videoElementRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover scale-x-[-1]"
+                  />
                   
                   {/* Overlay indicators */}
                   <div className="absolute top-4 left-4 space-y-2">
-                    <Badge className="bg-success">Eye Contact: {liveMetrics.eyeContact}%</Badge>
+                    <Badge className={liveMetrics.isLooking ? "bg-success" : "bg-destructive"}>
+                      Eye Contact: {Math.round(liveMetrics.eyeContact)}%
+                    </Badge>
                     <Badge className="bg-accent">{liveMetrics.emotion}</Badge>
+                    {!liveMetrics.faceDetected && (
+                      <Badge className="bg-warning flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        No face detected
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Recording indicator */}
+                  {isRecording && (
+                    <div className="absolute top-4 right-4">
+                      <Badge variant="destructive" className="animate-pulse flex items-center gap-1">
+                        <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                        Recording
+                      </Badge>
+                    </div>
+                  )}
+
+                  {/* Head pose indicator */}
+                  <div className="absolute bottom-4 left-4 text-xs text-white bg-black/50 px-2 py-1 rounded">
+                    Yaw: {liveMetrics.yaw.toFixed(1)}° | Pitch: {liveMetrics.pitch.toFixed(1)}° | Roll: {liveMetrics.roll.toFixed(1)}°
                   </div>
                 </div>
               </CardContent>
@@ -273,16 +479,76 @@ const Interview = () => {
                   value={liveMetrics.emotion}
                   icon={Smile}
                   color="text-warning"
+                  showProgress={false}
                 />
+
+                {/* Speech Metrics */}
+                {(liveMetrics.clarity > 0 || liveMetrics.fluency > 0) && (
+                  <div className="pt-4 border-t space-y-3">
+                    <p className="text-xs font-medium text-muted-foreground">🎤 Speech Analysis</p>
+                    <MetricGauge
+                      label="Clarity"
+                      value={liveMetrics.clarity}
+                      icon={Mic}
+                      color="text-blue-500"
+                    />
+                    <MetricGauge
+                      label="Fluency"
+                      value={liveMetrics.fluency}
+                      icon={Activity}
+                      color="text-purple-500"
+                    />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium">Speaking Pace</span>
+                      <span className="font-bold">{Math.round(liveMetrics.pace)} WPM</span>
+                    </div>
+                    {liveMetrics.fillerWords > 0 && (
+                      <div className="flex items-center justify-between text-sm text-warning">
+                        <span className="font-medium">Filler Words</span>
+                        <span className="font-bold">{liveMetrics.fillerWords}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="pt-4 border-t space-y-3">
                   <div className="text-xs space-y-1">
                     <p className="font-medium">🎯 Quick Tips</p>
-                    <p className="text-muted-foreground">Maintain eye contact with the camera</p>
+                    {!liveMetrics.isLooking && liveMetrics.faceDetected && (
+                      <p className="text-muted-foreground">⚠️ Look at the camera to improve eye contact</p>
+                    )}
+                    {!liveMetrics.faceDetected && (
+                      <p className="text-muted-foreground">⚠️ Please position your face in the camera view</p>
+                    )}
+                    {liveMetrics.isLooking && (
+                      <p className="text-muted-foreground">✅ Great eye contact! Keep it up</p>
+                    )}
+                    {liveMetrics.pace > 180 && (
+                      <p className="text-muted-foreground">⚠️ You're speaking fast - try to slow down</p>
+                    )}
+                    {liveMetrics.pace > 0 && liveMetrics.pace < 100 && (
+                      <p className="text-muted-foreground">⚠️ You're speaking slowly - try to be more fluent</p>
+                    )}
                   </div>
                   
-                  <div className="h-20 bg-muted rounded flex items-center justify-center">
-                    <p className="text-xs text-muted-foreground">Timeline heatmap</p>
+                  {/* Status indicators */}
+                  <div className="h-20 bg-muted rounded flex flex-col items-center justify-center gap-1">
+                    <div className="flex items-center gap-2 text-xs">
+                      {metrics.isVideoActive ? (
+                        <Video className="h-4 w-4 text-success" />
+                      ) : (
+                        <VideoOff className="h-4 w-4 text-destructive" />
+                      )}
+                      <span>{metrics.isVideoActive ? "Camera Active" : "Camera Off"}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      {isRecording ? (
+                        <Mic className="h-4 w-4 text-success animate-pulse" />
+                      ) : (
+                        <MicOff className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <span>{isRecording ? "Recording..." : "Microphone Ready"}</span>
+                    </div>
                   </div>
                 </div>
               </CardContent>
