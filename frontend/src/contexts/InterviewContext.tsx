@@ -69,13 +69,27 @@ export const InterviewProvider = ({ children }: InterviewProviderProps) => {
     try {
       const storedSessionId = localStorage.getItem("interview_session_id");
       const storedSpeech = localStorage.getItem("speech_test_results");
+      const storedResults = localStorage.getItem("interview_results");
+      
       if (storedSessionId) {
         setSessionId(storedSessionId);
       }
       if (storedSpeech) {
         setSpeechTestResults(JSON.parse(storedSpeech));
       }
-    } catch {}
+      if (storedResults && !session) {
+        // Load interview results as session data for non-logged-in users
+        const results = JSON.parse(storedResults);
+        setSession({
+          ...results,
+          userId: "guest",
+          createdAt: new Date() as any,
+          status: "completed"
+        });
+      }
+    } catch (e) {
+      console.warn("Failed to load from localStorage:", e);
+    }
   }, []);
 
   const startNewSession = async (): Promise<string> => {
@@ -143,11 +157,27 @@ export const InterviewProvider = ({ children }: InterviewProviderProps) => {
     bodyLanguage: BodyLanguageMetrics;
     questions: InterviewQuestion[];
   }): Promise<void> => {
-    if (!sessionId) throw new Error("No active session");
-    await completeInterviewSession(sessionId, finalResults);
-    
-    // Reload the session to get updated data
-    await loadSession(sessionId);
+    if (!sessionId) {
+      // If user is logged in, create a new session and save
+      if (currentUser) {
+        const newSessionId = await startNewSession();
+        await completeInterviewSession(newSessionId, finalResults);
+        setSessionId(newSessionId);
+        await loadSession(newSessionId);
+      } else {
+        // For non-logged-in users, just store in memory and localStorage
+        setSpeechTestResults((prev) => prev || null);
+        setInterviewAnswers(finalResults.questions.map(q => q.answer));
+        // Store session data locally
+        try {
+          localStorage.setItem("interview_results", JSON.stringify(finalResults));
+        } catch {}
+      }
+    } else {
+      await completeInterviewSession(sessionId, finalResults);
+      // Reload the session to get updated data
+      await loadSession(sessionId);
+    }
   };
 
   const value: InterviewContextType = {

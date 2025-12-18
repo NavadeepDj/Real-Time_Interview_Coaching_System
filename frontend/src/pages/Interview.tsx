@@ -196,70 +196,130 @@ const Interview = () => {
       toast.success("Moving to next question");
     } else {
       // Finish interview - save all results
-      if (currentUser) {
-        setIsSubmitting(true);
-        try {
-          // Generate scores based on answer length and real metrics from backend
-          const questionResults = questions.map((q, idx) => {
-            const answerLength = answers[idx].length;
-            // Score based on answer completeness and live metrics
-            const baseScore = answerLength > 200 ? 85 : answerLength > 100 ? 75 : answerLength > 50 ? 65 : 50;
-            const metricsBonus = liveMetrics.confidence > 70 ? 10 : liveMetrics.confidence > 50 ? 5 : 0;
-            const score = Math.min(100, baseScore + metricsBonus);
-            
-            return {
-              title: q.title,
-              category: q.category,
-              difficulty: q.difficulty,
-              question: q.question,
-              answer: answers[idx],
-              score,
-              feedback: answerLength > 100 
-                ? "Good detailed response with clear explanation."
-                : "Consider providing more detail in your response."
-            };
-          });
+      setIsSubmitting(true);
+      try {
+        // Generate scores based on answer length and real metrics from backend
+        const questionResults = questions.map((q, idx) => {
+          const answerLength = answers[idx].length;
+          // Score based on answer completeness and live metrics
+          const baseScore = answerLength > 200 ? 85 : answerLength > 100 ? 75 : answerLength > 50 ? 65 : 50;
+          const metricsBonus = liveMetrics.confidence > 70 ? 10 : liveMetrics.confidence > 50 ? 5 : 0;
+          const score = Math.min(100, baseScore + metricsBonus);
           
-          const technicalScore = Math.floor(questionResults.reduce((acc, q) => acc + (q.score || 0), 0) / questionResults.length);
-          
-          // Use real speech test results or live audio metrics
-          const communicationScore = speechTestResults 
-            ? Math.floor((speechTestResults.fluency + speechTestResults.pronunciation) / 2)
-            : liveMetrics.clarity > 0 || liveMetrics.fluency > 0
-              ? Math.floor((liveMetrics.clarity + liveMetrics.fluency) / 2)
-              : 0;
-          
-          // Use real body language metrics from video analysis
-          const bodyLanguageScore = metrics.isConnected && liveMetrics.faceDetected
-            ? Math.floor((liveMetrics.eyeContact + liveMetrics.attention + liveMetrics.confidence) / 3)
+          return {
+            title: q.title,
+            category: q.category,
+            difficulty: q.difficulty,
+            question: q.question,
+            answer: answers[idx],
+            score,
+            feedback: answerLength > 100 
+              ? "Good detailed response with clear explanation."
+              : "Consider providing more detail in your response."
+          };
+        });
+        
+        const technicalScore = Math.floor(questionResults.reduce((acc, q) => acc + (q.score || 0), 0) / questionResults.length);
+        
+        // Use real speech test results or live audio metrics
+        const communicationScore = speechTestResults 
+          ? Math.floor((speechTestResults.fluency + speechTestResults.pronunciation) / 2)
+          : liveMetrics.clarity > 0 || liveMetrics.fluency > 0
+            ? Math.floor((liveMetrics.clarity + liveMetrics.fluency) / 2)
             : 0;
+        
+        // Use real body language metrics from video analysis
+        const bodyLanguageScore = metrics.isConnected && liveMetrics.faceDetected
+          ? Math.floor((liveMetrics.eyeContact + liveMetrics.attention + liveMetrics.confidence) / 3)
+          : 0;
+        
+        const overallScore = Math.floor((technicalScore + communicationScore + bodyLanguageScore) / 3);
+        
+        // Save results with timeout
+        if (currentUser) {
+          toast.info("Saving results to Firebase...");
           
-          const overallScore = Math.floor((technicalScore + communicationScore + bodyLanguageScore) / 3);
+          // Create a timeout promise that rejects after 5 seconds
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Save operation timed out")), 5000)
+          );
           
-          await completeSession({
-            overallScore,
-            technicalScore,
-            communicationScore,
-            bodyLanguageScore,
-            bodyLanguage: {
-              eyeContact: liveMetrics.eyeContact,
-              avgBlinkRate: liveMetrics.blinkRate,
-              confidenceCurve: liveMetrics.confidence,
-              emotionTimeline: ["Confident", "Focused", liveMetrics.emotion]
-            },
-            questions: questionResults
-          });
-          
-          toast.success("Interview completed and saved!");
-        } catch (error) {
-          console.error("Failed to save interview:", error);
-          toast.error("Failed to save results, but navigating to report");
-        } finally {
-          setIsSubmitting(false);
+          try {
+            // Race between the save operation and timeout
+            await Promise.race([
+              completeSession({
+                overallScore,
+                technicalScore,
+                communicationScore,
+                bodyLanguageScore,
+                bodyLanguage: {
+                  eyeContact: liveMetrics.eyeContact,
+                  avgBlinkRate: liveMetrics.blinkRate,
+                  confidenceCurve: liveMetrics.confidence,
+                  emotionTimeline: ["Confident", "Focused", liveMetrics.emotion]
+                },
+                questions: questionResults
+              }),
+              timeoutPromise
+            ]);
+            toast.success("Interview completed and saved!");
+          } catch (timeoutError) {
+            // If timeout or error, save locally and continue
+            console.warn("Firebase save timeout or error, saving locally", timeoutError);
+            toast.warning("Saved locally - Firebase sync may have issues");
+            // Store in localStorage as backup
+            try {
+              localStorage.setItem("interview_results", JSON.stringify({
+                overallScore,
+                technicalScore,
+                communicationScore,
+                bodyLanguageScore,
+                bodyLanguage: {
+                  eyeContact: liveMetrics.eyeContact,
+                  avgBlinkRate: liveMetrics.blinkRate,
+                  confidenceCurve: liveMetrics.confidence,
+                  emotionTimeline: ["Confident", "Focused", liveMetrics.emotion]
+                },
+                questions: questionResults
+              }));
+            } catch (e) {
+              console.error("Failed to save to localStorage:", e);
+            }
+          }
+        } else {
+          toast.info("Saving results locally (not logged in)");
+          // Save to localStorage for non-logged-in users
+          try {
+            localStorage.setItem("interview_results", JSON.stringify({
+              overallScore,
+              technicalScore,
+              communicationScore,
+              bodyLanguageScore,
+              bodyLanguage: {
+                eyeContact: liveMetrics.eyeContact,
+                avgBlinkRate: liveMetrics.blinkRate,
+                confidenceCurve: liveMetrics.confidence,
+                emotionTimeline: ["Confident", "Focused", liveMetrics.emotion]
+              },
+              questions: questionResults
+            }));
+          } catch (e) {
+            console.error("Failed to save to localStorage:", e);
+          }
         }
+      } catch (error) {
+        console.error("Error preparing interview results:", error);
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        toast.error(`Error: ${errorMessage}`);
+      } finally {
+        setIsSubmitting(false);
       }
+      
+      // Always navigate to report, regardless of save status
       stopVideo();
-      navigate("/report");
+      setTimeout(() => {
+        navigate("/report");
+      }, 500);
     }
   };
 

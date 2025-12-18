@@ -17,6 +17,7 @@ const Report = () => {
   const { session, sessionId, loadSession, speechTestResults } = useInterview();
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [isUsingMockData, setIsUsingMockData] = useState(false);
 
   useEffect(() => {
     // Load session data if we have a sessionId but no session loaded
@@ -26,61 +27,103 @@ const Report = () => {
     }
   }, [sessionId, session, loadSession]);
 
-  // Use session data if available, otherwise use defaults
-  const overallScore = session?.overallScore || 82;
-  const scores = {
-    technical: session?.technicalScore || 78,
-    communication: session?.communicationScore || 85,
-    bodyLanguage: session?.bodyLanguageScore || 80
-  };
-
-  const speechMetrics = session?.speechTest || speechTestResults || {
-    fluency: 0,
-    pronunciation: 0,
-    fillerWords: 0,
-    pace: 0,
-    recordingDuration: 0,
-    transcribedText: "",
-    clarityScore: 0,
-    fillerWordsDetail: {}
-  };
-
-  const bodyLanguageMetrics = session?.bodyLanguage || {
-    eyeContact: 75,
-    avgBlinkRate: 15,
-    confidenceCurve: 82,
-    emotionTimeline: ["Confident", "Focused", "Calm"]
-  };
-
-  const questionResults = session?.questions || [
-    {
-      title: "Core Concepts",
-      category: "Java",
-      difficulty: "Medium",
-      question: "Explain the difference between an interface and an abstract class in Java.",
-      answer: "",
-      score: 85,
-      feedback: "Strong understanding of fundamental concepts. Clear explanation of interface vs abstract class with practical examples."
+  // Determine if we're using mock data
+  const hasRealData = session || speechTestResults || sessionId;
+  
+  // Mock data for fallback
+  const mockData = {
+    overallScore: 82,
+    technicalScore: 78,
+    communicationScore: 85,
+    bodyLanguageScore: 80,
+    speechTest: {
+      fluency: 82,
+      pronunciation: 88,
+      fillerWords: 3,
+      pace: 145,
+      recordingDuration: 45,
+      transcribedText: "This is a sample transcription of your speech. It demonstrates how your actual interview response would appear here with detailed analysis.",
+      clarityScore: 85,
+      fillerWordsDetail: { um: 1, uh: 1, like: 1 }
     },
-    {
-      title: "Problem Solving",
-      category: "Algorithms",
-      difficulty: "Hard",
-      question: "Design an algorithm to find the longest palindromic substring.",
-      answer: "",
-      score: 75,
-      feedback: "Good approach to the problem. Consider optimizing time complexity using dynamic programming."
+    bodyLanguage: {
+      eyeContact: 75,
+      avgBlinkRate: 15,
+      confidenceCurve: 82,
+      emotionTimeline: ["Confident", "Focused", "Calm"]
     },
-    {
-      title: "System Design",
-      category: "Architecture",
-      difficulty: "Hard",
-      question: "How would you design a URL shortening service like bit.ly?",
-      answer: "",
-      score: 74,
-      feedback: "Solid high-level design. Could improve on discussing caching strategies and database sharding."
+    questions: [
+      {
+        title: "Core Concepts",
+        category: "Java",
+        difficulty: "Medium",
+        question: "Explain the difference between an interface and an abstract class in Java.",
+        answer: "Interfaces define a contract for what a class should do, while abstract classes provide a base implementation. Interfaces support multiple inheritance of type while abstract classes don't.",
+        score: 85,
+        feedback: "Strong understanding of fundamental concepts. Clear explanation of interface vs abstract class with practical examples."
+      },
+      {
+        title: "Problem Solving",
+        category: "Algorithms",
+        difficulty: "Hard",
+        question: "Design an algorithm to find the longest palindromic substring.",
+        answer: "We can use dynamic programming to solve this in O(n²) time and O(n²) space by building a table to track palindromic substrings.",
+        score: 75,
+        feedback: "Good approach to the problem. Consider optimizing time complexity using dynamic programming or expanding around centers approach."
+      },
+      {
+        title: "System Design",
+        category: "Architecture",
+        difficulty: "Hard",
+        question: "How would you design a URL shortening service like bit.ly?",
+        answer: "Use a database to map short codes to long URLs, implement caching with Redis, use consistent hashing for distribution, and include analytics for tracking.",
+        score: 74,
+        feedback: "Solid high-level design. Could improve on discussing caching strategies, database sharding, and handling edge cases."
+      }
+    ]
+  };
+
+  // Use session data if available, otherwise use speech test results, otherwise use mock data
+  useEffect(() => {
+    if (!session && !speechTestResults && !sessionId) {
+      setIsUsingMockData(true);
+    } else {
+      setIsUsingMockData(false);
     }
-  ];
+  }, [session, speechTestResults, sessionId]);
+
+  // Use real data or mock data
+  const data = session ? {
+    overallScore: session.overallScore || mockData.overallScore,
+    technicalScore: session.technicalScore || mockData.technicalScore,
+    communicationScore: session.communicationScore || mockData.communicationScore,
+    bodyLanguageScore: session.bodyLanguageScore || mockData.bodyLanguageScore,
+    speechTest: session.speechTest || mockData.speechTest,
+    bodyLanguage: session.bodyLanguage || mockData.bodyLanguage,
+    questions: session.questions || mockData.questions
+  } : {
+    overallScore: 82,
+    technicalScore: 78,
+    communicationScore: 85,
+    bodyLanguageScore: 80,
+    speechTest: mockData.speechTest,
+    bodyLanguage: mockData.bodyLanguage,
+    questions: mockData.questions
+  };
+
+  // Use session data if available, otherwise use defaults
+  const overallScore = data.overallScore;
+  const scores = {
+    technical: data.technicalScore,
+    communication: data.communicationScore,
+    bodyLanguage: data.bodyLanguageScore
+  };
+
+  const speechMetrics = data.speechTest;
+
+  const bodyLanguageMetrics = data.bodyLanguage;
+
+  const questionResults = data.questions;
 
   const handleDownloadPDF = async () => {
     setIsGeneratingPDF(true);
@@ -147,6 +190,16 @@ const Report = () => {
       </header>
 
       <div className="container mx-auto px-4 py-8 max-w-5xl space-y-8">
+        {/* Mock Data Banner */}
+        {isUsingMockData && (
+          <Card className="border-yellow-500/50 bg-yellow-50/50 dark:bg-yellow-950/20">
+            <CardContent className="pt-4">
+              <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                ⚠️ <strong>Demo Mode:</strong> You're viewing a sample report. Complete the full interview to generate your personalized results!
+              </p>
+            </CardContent>
+          </Card>
+        )}
         {/* Overall Score */}
         <Card className="border-accent/20 bg-gradient-primary text-primary-foreground">
           <CardContent className="pt-8 pb-8 text-center">
