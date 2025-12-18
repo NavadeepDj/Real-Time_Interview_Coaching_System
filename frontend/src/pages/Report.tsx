@@ -35,11 +35,14 @@ const Report = () => {
   };
 
   const speechMetrics = session?.speechTest || speechTestResults || {
-    fluency: 85,
-    pronunciation: 78,
-    fillerWords: 4,
-    pace: 140,
-    recordingDuration: 45
+    fluency: 0,
+    pronunciation: 0,
+    fillerWords: 0,
+    pace: 0,
+    recordingDuration: 0,
+    transcribedText: "",
+    clarityScore: 0,
+    fillerWordsDetail: {}
   };
 
   const bodyLanguageMetrics = session?.bodyLanguage || {
@@ -193,6 +196,27 @@ const Report = () => {
                 <CardContent className="pt-4">
                   <p className="text-2xl font-bold">{speechMetrics.fillerWords}</p>
                   <p className="text-sm text-muted-foreground">Filler words detected</p>
+                  {speechMetrics.fillerWords > 0 && (
+                    <details className="mt-3 text-sm">
+                      <summary className="cursor-pointer font-medium text-primary hover:underline">
+                        View filler words used
+                      </summary>
+                      <div className="mt-2 space-y-1 text-muted-foreground pl-4 border-l-2 border-accent">
+                        {Object.keys(speechMetrics.fillerWordsDetail || {}).length > 0 ? (
+                          Object.entries(speechMetrics.fillerWordsDetail!)
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([word, count]) => (
+                              <div key={word} className="flex items-center justify-between">
+                                <span>{word}</span>
+                                <span className="font-medium">{count}</span>
+                              </div>
+                            ))
+                        ) : (
+                          <p>No detailed filler words available</p>
+                        )}
+                      </div>
+                    </details>
+                  )}
                 </CardContent>
               </Card>
               <Card className="bg-muted">
@@ -202,6 +226,20 @@ const Report = () => {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Transcript viewer */}
+            {speechMetrics.transcribedText && (
+              <div className="pt-4">
+                <details className="text-sm">
+                  <summary className="cursor-pointer font-medium text-primary hover:underline">
+                    View Speech Transcript
+                  </summary>
+                  <p className="mt-2 text-muted-foreground whitespace-pre-wrap pl-4 border-l-2 border-accent">
+                    {speechMetrics.transcribedText}
+                  </p>
+                </details>
+              </div>
+            )}
           </CardContent>
         </Card>
 

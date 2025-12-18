@@ -16,6 +16,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 import numpy as np
+import cv2
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -205,7 +206,7 @@ async def websocket_video_endpoint(websocket: WebSocket, client_id: str):
     WebSocket endpoint for real-time video frame processing.
     
     Client sends: JSON with "frame" key containing base64-encoded image
-    Server sends: JSON with head pose analysis results
+    Server sends: JSON with head pose analysis results and annotated frame
     """
     await video_manager.connect(websocket, client_id)
     
@@ -224,11 +225,43 @@ async def websocket_video_endpoint(websocket: WebSocket, client_id: str):
                 continue
             
             try:
-                result = head_pose_detector.process_base64_frame(data["frame"])
-                response = result.to_dict()
-                response["timestamp"] = time.time()
-                await websocket.send_json(response)
+                base64_frame = data["frame"]
+                
+                # Decode frame for processing
+                if ',' in base64_frame:
+                    base64_frame = base64_frame.split(',')[1]
+                
+                img_bytes = base64.b64decode(base64_frame)
+                nparr = np.frombuffer(img_bytes, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                
+                if frame is None:
+                    await websocket.send_json({"error": "Could not decode frame"})
+                    continue
+                
+                # Process frame to get head pose
+                result = head_pose_detector.process_frame(frame)
+                
+                # Draw annotations on the frame
+                annotated_frame = head_pose_detector.draw_annotations(frame, result)
+                
+                # Encode annotated frame back to base64
+                success, buffer = cv2.imencode('.jpg', annotated_frame)
+                if success:
+                    frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                    
+                    response = result.to_dict()
+                    response["timestamp"] = time.time()
+                    response["annotated_frame"] = f"data:image/jpeg;base64,{frame_base64}"
+                    
+                    # Debug: log detection status and angles
+                    print(f"VideoWS: face_detected={response.get('face_detected')} yaw={response.get('yaw')} pitch={response.get('pitch')} roll={response.get('roll')}")
+                    await websocket.send_json(response)
+                else:
+                    await websocket.send_json({"error": "Could not encode annotated frame"})
+                    
             except Exception as e:
+                print(f"Frame processing error: {e}")
                 await websocket.send_json({"error": str(e)})
                 
     except WebSocketDisconnect:

@@ -20,7 +20,9 @@ nltk
 # Audio processing
 sounddevice
 scipy
-webrtcvad
+# Use prebuilt wheels for Windows to avoid MSVC build tools
+webrtcvad-wheels; platform_system == "Windows"
+webrtcvad; platform_system != "Windows"
 
 # CORS
 python-dotenv

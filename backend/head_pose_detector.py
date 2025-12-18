@@ -35,10 +35,10 @@ class HeadPoseResult:
             "yaw": round(self.yaw, 1),
             "pitch": round(self.pitch, 1),
             "roll": round(self.roll, 1),
-            "is_looking_at_camera": self.is_looking_at_camera,
+            "is_looking_at_camera": bool(self.is_looking_at_camera),
             "attention_score": round(self.attention_score, 1),
             "eye_contact_score": round(self.eye_contact_score, 1),
-            "face_detected": self.face_detected
+            "face_detected": bool(self.face_detected)
         }
 
 
@@ -76,8 +76,14 @@ class HeadPoseDetector:
         Args:
             smoothing_window: Number of frames to average for smoothing
         """
-        # Initialize MediaPipe Face Mesh (same as working script)
-        self.face_mesh = mp_face_mesh.FaceMesh(refine_landmarks=True)
+        # Initialize MediaPipe Face Mesh with tuned thresholds for reliability on varied lighting/cameras
+        self.face_mesh = mp_face_mesh.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.2,
+            min_tracking_confidence=0.2,
+        )
         
         # Smoothing buffers
         self.smoothed_angles = deque(maxlen=smoothing_window)

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { 
   createInterviewSession, 
   saveSpeechTestResults, 
@@ -64,6 +64,20 @@ export const InterviewProvider = ({ children }: InterviewProviderProps) => {
   const [speechTestResults, setSpeechTestResults] = useState<SpeechTestResult | null>(null);
   const [interviewAnswers, setInterviewAnswers] = useState<string[]>(["", "", ""]);
 
+  // Bootstrap from localStorage (supports non-auth flows and page reloads)
+  useEffect(() => {
+    try {
+      const storedSessionId = localStorage.getItem("interview_session_id");
+      const storedSpeech = localStorage.getItem("speech_test_results");
+      if (storedSessionId) {
+        setSessionId(storedSessionId);
+      }
+      if (storedSpeech) {
+        setSpeechTestResults(JSON.parse(storedSpeech));
+      }
+    } catch {}
+  }, []);
+
   const startNewSession = async (): Promise<string> => {
     if (!currentUser) throw new Error("User must be logged in");
     
@@ -71,6 +85,7 @@ export const InterviewProvider = ({ children }: InterviewProviderProps) => {
     try {
       const newSessionId = await createInterviewSession(currentUser.uid);
       setSessionId(newSessionId);
+      try { localStorage.setItem("interview_session_id", newSessionId); } catch {}
       setSpeechTestResults(null);
       setInterviewAnswers(["", "", ""]);
       return newSessionId;
@@ -109,6 +124,7 @@ export const InterviewProvider = ({ children }: InterviewProviderProps) => {
       await saveSpeechTestResults(sessionId, results);
     }
     setSpeechTestResults(results);
+    try { localStorage.setItem("speech_test_results", JSON.stringify(results)); } catch {}
   };
 
   const saveInterview = async (

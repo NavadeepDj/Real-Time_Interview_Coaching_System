@@ -46,6 +46,8 @@ class SpeechAnalysisResult:
     fluency_score: float  # 0-100
     pace_wpm: float  # Words per minute
     filler_words_count: int
+    # Map of filler word -> count, for detailed reporting
+    filler_words_detail: dict
     confidence: float  # Whisper's confidence
     pronunciation_score: float  # 0-100
     
@@ -57,7 +59,8 @@ class SpeechAnalysisResult:
             "pace_wpm": round(self.pace_wpm, 1),
             "filler_words_count": self.filler_words_count,
             "confidence": round(self.confidence, 2),
-            "pronunciation_score": round(self.pronunciation_score, 2)
+            "pronunciation_score": round(self.pronunciation_score, 2),
+            "filler_words_detail": self.filler_words_detail
         }
 
 
@@ -67,12 +70,50 @@ class SpeechAnalyzer:
     Uses OpenAI Whisper for transcription and various NLP techniques for analysis.
     """
     
-    # Common filler words to detect
+    # Common filler words and phrases to detect
     FILLER_WORDS = {
         'um', 'uh', 'like', 'you know', 'so', 'basically', 'actually',
         'literally', 'right', 'okay', 'well', 'i mean', 'sort of',
-        'kind of', 'you see', 'er', 'ah', 'hmm', 'mhm'
+        'kind of', 'you see', 'er', 'ah', 'hmm', 'mhm', 'yeah', 'man',
+        'you know', 'i think', 'i suppose', 'i guess', 'and stuff',
+        'or something', 'or whatever', 'at the end of the day', 'frankly',
+        'honestly', 'truthfully', 'basically speaking', 'in my opinion',
+        'to be honest', 'to be fair', 'if you will', 'as it were'
     }
+    
+    # Regex patterns for common filler word variations (handles repeated characters)
+    FILLER_PATTERNS = [
+        (r'\b(um+|umm+)\b', 'um'),  # um, umm, ummm, etc.
+        (r'\b(uh+|uhh+)\b', 'uh'),  # uh, uhh, uhhh, etc.
+        (r'\b(ah+|ahh+)\b', 'ah'),  # ah, ahh, ahhh, etc.
+        (r'\b(er+|err+)\b', 'er'),  # er, err, errr, etc.
+        (r'\b(like)\b', 'like'),
+        (r'\b(you\s+know)\b', 'you know'),
+        (r'\b(so)\b', 'so'),
+        (r'\b(basically)\b', 'basically'),
+        (r'\b(actually)\b', 'actually'),
+        (r'\b(literally)\b', 'literally'),
+        (r'\b(right)\b', 'right'),
+        (r'\b(okay|ok)\b', 'okay'),
+        (r'\b(well)\b', 'well'),
+        (r'\b(i\s+mean)\b', 'i mean'),
+        (r'\b(sort\s+of)\b', 'sort of'),
+        (r'\b(kind\s+of)\b', 'kind of'),
+        (r'\b(you\s+see)\b', 'you see'),
+        (r'\b(hmm+)\b', 'hmm'),
+        (r'\b(mhm)\b', 'mhm'),
+        (r'\b(yeah)\b', 'yeah'),
+        (r'\b(man)\b', 'man'),  # Common slang filler
+        (r'\b(dude)\b', 'dude'),  # Common slang filler
+        (r'\b(bro)\b', 'bro'),  # Common slang filler
+        (r'\b(i\s+think)\b', 'i think'),
+        (r'\b(i\s+suppose)\b', 'i suppose'),
+        (r'\b(i\s+guess)\b', 'i guess'),
+        (r'\b(to\s+be\s+honest)\b', 'to be honest'),
+        (r'\b(to\s+be\s+fair)\b', 'to be fair'),
+        (r'\b(honestly)\b', 'honestly'),
+        (r'\b(frankly)\b', 'frankly'),
+    ]
     
     def __init__(self, model_size: str = "base"):
         """
@@ -172,15 +213,30 @@ class SpeechAnalyzer:
         return text, confidence
     
     def count_filler_words(self, text: str) -> int:
-        """Count filler words in the transcribed text"""
+        """Count filler words in the transcribed text using pattern matching"""
         text_lower = text.lower()
         count = 0
         
-        for filler in self.FILLER_WORDS:
-            # Count occurrences of each filler word/phrase
-            count += len(re.findall(r'\b' + re.escape(filler) + r'\b', text_lower))
+        for pattern, _ in self.FILLER_PATTERNS:
+            matches = re.findall(pattern, text_lower)
+            count += len(matches)
             
         return count
+
+    def get_filler_words_detail(self, text: str) -> dict:
+        """Return a dictionary of filler word -> count found in text"""
+        text_lower = text.lower()
+        detail = {}
+        
+        for pattern, normalized_name in self.FILLER_PATTERNS:
+            matches = re.findall(pattern, text_lower)
+            if matches:
+                # Count occurrences (handle tuples from grouped patterns)
+                count = len(matches)
+                if count > 0:
+                    detail[normalized_name] = detail.get(normalized_name, 0) + count
+        
+        return detail
     
     def calculate_pace(self, text: str, duration_seconds: float) -> float:
         """
@@ -425,6 +481,7 @@ class SpeechAnalyzer:
         fluency = self.calculate_fluency_score(text, duration_seconds)
         pace = self.calculate_pace(text, duration_seconds)
         filler_count = self.count_filler_words(text)
+        filler_detail = self.get_filler_words_detail(text)
         pronunciation = self.calculate_pronunciation_score(confidence, text)
         
         return SpeechAnalysisResult(
@@ -434,7 +491,8 @@ class SpeechAnalyzer:
             pace_wpm=pace,
             filler_words_count=filler_count,
             confidence=confidence,
-            pronunciation_score=pronunciation
+            pronunciation_score=pronunciation,
+            filler_words_detail=filler_detail
         )
     
     def analyze_speech_file(
@@ -470,6 +528,7 @@ class SpeechAnalyzer:
         fluency = self.calculate_fluency_score(text, duration)
         pace = self.calculate_pace(text, duration)
         filler_count = self.count_filler_words(text)
+        filler_detail = self.get_filler_words_detail(text)
         pronunciation = self.calculate_pronunciation_score(confidence, text)
         
         return SpeechAnalysisResult(
@@ -479,7 +538,8 @@ class SpeechAnalyzer:
             pace_wpm=pace,
             filler_words_count=filler_count,
             confidence=confidence,
-            pronunciation_score=pronunciation
+            pronunciation_score=pronunciation,
+            filler_words_detail=filler_detail
         )
 
 

@@ -4,11 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Mic, Square, ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
+import { Mic, Square, ArrowLeft, ArrowRight, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 import { useInterview } from "@/contexts/InterviewContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useInterviewMetrics } from "@/hooks/useInterviewMetrics";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 const SpeechTest = () => {
   const navigate = useNavigate();
@@ -32,6 +33,14 @@ const SpeechTest = () => {
     pace: 0,
     pronunciation: 0,
   });
+  
+  const [analysisData, setAnalysisData] = useState({
+    transcribedText: "",
+    fillerWordsDetail: {} as Record<string, number>,
+    clarityScore: 0,
+  });
+  
+  const [isTranscriptionOpen, setIsTranscriptionOpen] = useState(false);
 
   const prompt = "Describe a recent project you worked on and explain your role in it. What challenges did you face and how did you overcome them?";
 
@@ -120,6 +129,11 @@ const SpeechTest = () => {
       };
       
       setMetrics(newMetrics);
+      setAnalysisData({
+        transcribedText: analysisResult.transcribed_text || "",
+        fillerWordsDetail: analysisResult.filler_words_detail || {},
+        clarityScore: Math.round(analysisResult.clarity_score || 0),
+      });
       setHasRecorded(true);
       
       // Save to Firebase if user is logged in
@@ -131,6 +145,7 @@ const SpeechTest = () => {
             recordingDuration: finalRecordingTime,
             transcribedText: analysisResult.transcribed_text,
             clarityScore: analysisResult.clarity_score,
+            fillerWordsDetail: analysisResult.filler_words_detail || {},
           });
           toast.success("Speech test results saved!");
         } catch (error) {
@@ -275,48 +290,97 @@ const SpeechTest = () => {
             <>
               <Card>
                 <CardHeader>
-                  <CardTitle>📊 Instant Metrics</CardTitle>
-                  <CardDescription>Your speech analysis results</CardDescription>
+                  <CardTitle>📊 Speech Analysis Results</CardTitle>
+                  <CardDescription>Detailed breakdown of your speech performance</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <div className="flex justify-between mb-2">
-                      <span className="text-sm font-medium">Fluency Score</span>
-                      <span className="text-sm font-bold text-success">{metrics.fluency}/100</span>
+                <CardContent className="space-y-6">
+                  {/* Filler Words Section - Featured */}
+                  <div className="bg-gradient-to-br from-warning/10 to-warning/5 border border-warning/30 rounded-lg p-6">
+                    <div className="space-y-4">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h3 className="text-lg font-semibold text-warning mb-1">⚠️ Filler Words Detected</h3>
+                          <p className="text-sm text-muted-foreground">Words that reduce clarity and impact</p>
+                        </div>
+                        <span className="text-4xl font-bold text-warning">{metrics.fillerWords}</span>
+                      </div>
+                      
+                      {/* Filler Words Detail */}
+                      {Object.keys(analysisData.fillerWordsDetail).length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-warning/20">
+                          <p className="text-sm font-medium mb-3 text-muted-foreground">Breakdown by type:</p>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                            {Object.entries(analysisData.fillerWordsDetail).map(([word, count]) => (
+                              <Badge key={word} variant="secondary" className="justify-center py-2 bg-warning/20 text-warning hover:bg-warning/30">
+                                <span className="capitalize">{word}</span>
+                                <span className="ml-1 font-bold">×{count}</span>
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Tip based on count */}
+                      <div className="bg-white/50 rounded p-3 mt-4">
+                        <p className="text-sm">
+                          <strong>💡 Tip:</strong> {metrics.fillerWords > 5 
+                            ? "Try to reduce filler words like 'um' and 'uh'. Take brief pauses instead."
+                            : "Great job! Your speech is clear with minimal filler words."}
+                        </p>
+                      </div>
                     </div>
-                    <Progress value={metrics.fluency} className="h-3" />
-                  </div>
-                  
-                  <div className="grid grid-cols-3 gap-4 mt-6">
-                    <MetricCard
-                      label="Filler Words"
-                      value={metrics.fillerWords}
-                      unit="times"
-                      color="text-warning"
-                    />
-                    <MetricCard
-                      label="Speaking Pace"
-                      value={metrics.pace}
-                      unit="WPM"
-                      color="text-accent"
-                    />
-                    <MetricCard
-                      label="Pronunciation"
-                      value={metrics.pronunciation}
-                      unit="/100"
-                      color="text-success"
-                    />
                   </div>
 
-                  <Card className="bg-muted mt-4">
-                    <CardContent className="pt-4">
-                      <p className="text-sm">
-                        <strong>💡 Tip:</strong> {metrics.fillerWords > 5 
-                          ? "Try to reduce filler words like 'um' and 'uh'. Take brief pauses instead."
-                          : "Great job! Your speech is clear with minimal filler words."}
-                      </p>
-                    </CardContent>
-                  </Card>
+                  {/* Main Metrics Grid */}
+                  <div>
+                    <h3 className="text-sm font-semibold mb-4 text-muted-foreground">Performance Metrics</h3>
+                    <div className="grid grid-cols-3 gap-4">
+                      <MetricCard
+                        label="Fluency Score"
+                        value={metrics.fluency}
+                        unit="/100"
+                        color="text-accent"
+                      />
+                      <MetricCard
+                        label="Speaking Pace"
+                        value={metrics.pace}
+                        unit="WPM"
+                        color="text-blue-500"
+                      />
+                      <MetricCard
+                        label="Pronunciation"
+                        value={metrics.pronunciation}
+                        unit="/100"
+                        color="text-success"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Transcription Dropdown */}
+                  <Collapsible open={isTranscriptionOpen} onOpenChange={setIsTranscriptionOpen}>
+                    <CollapsibleTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className="w-full justify-between"
+                      >
+                        <span className="font-medium">📝 View Transcription</span>
+                        {isTranscriptionOpen ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <Card className="mt-4 bg-muted/50">
+                        <CardContent className="pt-4">
+                          <p className="text-sm leading-relaxed text-foreground">
+                            {analysisData.transcribedText}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </CardContent>
               </Card>
 

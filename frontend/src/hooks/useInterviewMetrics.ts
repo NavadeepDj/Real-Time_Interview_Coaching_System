@@ -142,16 +142,17 @@ export function useInterviewMetrics() {
     
     if (!ctx || video.videoWidth === 0) return;
 
-    // Set canvas size to video size (scaled down for performance)
-    const scale = 0.5; // Process at half resolution
+    // Set canvas size to video size (use full res for reliability)
+    // If performance becomes an issue, reduce to 0.75
+    const scale = 1.0;
     canvas.width = video.videoWidth * scale;
     canvas.height = video.videoHeight * scale;
 
     // Draw video frame to canvas
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Convert to base64 JPEG
-    const frameData = canvas.toDataURL('image/jpeg', 0.7);
+    // Convert to base64 JPEG with slightly higher quality to aid detection
+    const frameData = canvas.toDataURL('image/jpeg', 0.85);
 
     // Send to backend
     try {

@@ -20,6 +20,10 @@ export interface SpeechTestResult {
   pace: number;
   pronunciation: number;
   recordingDuration: number;
+  // Optional detailed fields from backend
+  transcribedText?: string;
+  clarityScore?: number;
+  fillerWordsDetail?: Record<string, number>;
 }
 
 export interface InterviewQuestion {
